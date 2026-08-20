@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Pantalla de carga</title>
+
+<style>
+/* =====================================================
+   VARIABLES
+   ===================================================== */
+:root {
+    --bg: #000000;
+    --fg: #F4F4F1;
+    --fg-dim: #8A8A85;
+    --line: #1E1E1C;
+    --accent: #E4293B;
+    --accent-glow: rgba(228,41,59,.35);
+
+    /* Altura real de la pantalla, la calcula el JS.
+       Es más confiable que 100vh/100dvh en WebViews
+       de Android (que es lo que estaba causando el
+       desorden al entrar en pantalla completa). */
+    --vh: 1vh;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    overscroll-behavior: none;
+}
+
+body {
+    position: fixed;
+    inset: 0;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+}
+
+/* =====================================================
+   ESCENARIO: ocupa TODA la pantalla real (sin caja fija,
+   sin franjas negras).
+   ===================================================== */
+#game {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: calc(var(--vh) * 100);
+    overflow: hidden;
+
+    background: var(--bg);
+
+    color: var(--fg);
+    font-family: "Lora", Georgia, "Times New Roman", serif;
+}
+
+/* =====================================================
+   VIDEO DE FONDO (loop hasta clic en Iniciar juego)
+   ===================================================== */
+#bgVideo {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 0;
+    pointer-events: none;
+}
+
+/* Overlay sutil para legibilidad del texto */
+.overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background:
+        radial-gradient(
+            120% 90% at 50% 100%,
+            var(--accent-glow) 0%,
+            rgba(0,0,0,.45) 40%,
+            rgba(0,0,0,.65) 100%
+        );
+    pointer-events: none;
+}
+
+/* =====================================================
+   TÍTULO: centrado en el espacio disponible
+   ===================================================== */
+.titulo-wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0 6vw;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.titulo {
+    font-size: clamp(28px, 5vw, 64px);
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    line-height: 1.2;
+    text-align: center;
+    text-shadow: 0 2px 12px rgba(0,0,0,.8);
+}
+
+.titulo .accent {
+    color: var(--accent);
+    text-shadow: 0 0 20px var(--accent-glow), 0 0 40px rgba(228,41,59,.15), 0 2px 12px rgba(0,0,0,.8);
+}
+
+/* =====================================================
+   CARGADOR: SIEMPRE anclado abajo de la pantalla,
+   independiente del título. Así nunca se desplaza al
+   centro por errores de cálculo de altura.
+   ===================================================== */
+.loader {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: max(40px, env(safe-area-inset-bottom) + 24px);
+    z-index: 3;
+
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+/* =====================================================
+   "TOCAR PARA INICIAR": solo se muestra en pantalla
+   completa, justo arriba de la barra de carga. Pequeño
+   y parpadeando lento (aparece / desaparece).
+   ===================================================== */
+.tocar-iniciar {
+    display: none;
+    text-align: center;
+    font-family: "Lora", Georgia, "Times New Roman", serif;
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+    opacity: 0;
+}
+
+.fullscreen-active .tocar-iniciar {
+    display: block;
+    animation: parpadeoTocar 3.6s ease-in-out infinite;
+}
+
+@keyframes parpadeoTocar {
+    0%   { opacity: 0; }
+    15%  { opacity: 1; }
+    55%  { opacity: 1; }
+    70%  { opacity: 0; }
+    100% { opacity: 0; }
+}
+
+.bar-track {
+    width: 100%;
+    height: 3px;
+    position: relative;
+    overflow: hidden;
+    background: var(--line);
+}
+
+.bar-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0%;
+    background: linear-gradient(to right, var(--accent) 0%, var(--accent) 90%, rgba(228,41,59,0) 100%);
+    box-shadow: 0 0 14px var(--accent-glow);
+    transition: width .2s linear;
+}
+
+.estado {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 16px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--fg-dim);
+}
+
+#porcentaje {
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+}
+
+/* =====================================================
+   BOTÓN INICIAR JUEGO (aparece al terminar la carga)
+   ===================================================== */
+#btnIniciar {
+    display: none;
+    margin: 0 auto;
+    padding: 14px 36px;
+    border: 1px solid rgba(255,255,255,.25);
+    border-radius: 4px;
+    background: rgba(228,41,59,.18);
+    color: var(--fg);
+    font-family: "Lora", Georgia, "Times New Roman", serif;
+    font-size: 15px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background .2s ease, transform .15s ease, box-shadow .2s ease;
+    box-shadow: 0 0 20px var(--accent-glow);
+    text-shadow: 0 1px 4px rgba(0,0,0,.6);
+}
+
+#btnIniciar:hover,
+#btnIniciar:active {
+    background: rgba(228,41,59,.35);
+    transform: scale(1.03);
+}
+
+#btnIniciar.visible {
+    display: block;
+    animation: aparecerBoton .5s ease forwards;
+}
+
+@keyframes aparecerBoton {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* =====================================================
+   BOTÓN PANTALLA COMPLETA
+   ===================================================== */
+#fullscreenBtn {
+    position: fixed;
+    top: max(18px, env(safe-area-inset-top));
+    right: max(18px, env(safe-area-inset-right));
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.18);
+    background: rgba(255,255,255,.06);
+    color: #fff;
+    font-size: 21px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    z-index: 9999;
+    transition: opacity .3s ease, transform .15s ease;
+}
+
+#fullscreenBtn:active { transform: scale(.88); }
+
+.fullscreen-active #fullscreenBtn {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* =====================================================
+   AVISO DE GIRAR PANTALLA (cuando no se puede bloquear
+   la orientación por API, ej. iOS Safari)
+   ===================================================== */
+#rotarAviso {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: #000;
+    color: var(--fg);
+    font-family: "Lora", Georgia, serif;
+    display: none;
+    flex-direction: column;
+    gap: 16px;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 24px;
+}
+
+#rotarAviso .icono {
+    font-size: 42px;
+    animation: girar 1.6s ease-in-out infinite;
+}
+
+@keyframes girar {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(90deg); }
+}
+
+body.necesita-rotar #rotarAviso { display: flex; }
+body.necesita-rotar #game { display: none; }
+
+@media (max-height: 450px) {
+    .loader { bottom: max(20px, env(safe-area-inset-bottom) + 12px); }
+}
+</style>
+</head>
+
+<body>
+
+<div id="game">
+    <!-- Video de fondo: se reproduce en loop hasta clic en Iniciar juego -->
+    <video id="bgVideo"
+           src="bg-video.mp4"
+           autoplay
+           muted
+           loop
+           playsinline
+           webkit-playsinline
+           preload="auto">
+    </video>
+
+    <div class="overlay"></div>
+
+    <button id="fullscreenBtn" type="button" aria-label="Pantalla completa">⛶</button>
+
+    <!-- Título opcional (puedes editarlo o quitarlo) -->
+    <div class="titulo-wrap">
+        <div class="titulo">
+            <!-- Ejemplo: <span class="accent">Nombre</span> del Juego -->
+        </div>
+    </div>
+
+    <div class="loader">
+        <div class="tocar-iniciar">Tocar para iniciar</div>
+        <div class="bar-track">
+            <div class="bar-fill" id="barFill"></div>
+        </div>
+        <div class="estado">
+            <span id="estadoTexto">Cargando</span>
+            <span id="porcentaje">0%</span>
+        </div>
+        <!-- Botón que aparece al terminar la carga -->
+        <button id="btnIniciar" type="button">Iniciar juego</button>
+    </div>
+</div>
+
+<div id="rotarAviso">
+    <div class="icono">⟲</div>
+    <div>Gira tu dispositivo para jugar en horizontal</div>
+</div>
+
+<script>
+/* =====================================================
+   ELEMENTOS
+   ===================================================== */
+const fullscreenBtn = document.getElementById("fullscreenBtn");
+const barFill = document.getElementById("barFill");
+const porcentaje = document.getElementById("porcentaje");
+const estadoTexto = document.getElementById("estadoTexto");
+const btnIniciar = document.getElementById("btnIniciar");
+const bgVideo = document.getElementById("bgVideo");
+
+/* =====================================================
+   ALTURA REAL DE LA PANTALLA (reemplaza a 100vh/100dvh,
+   que es lo que causaba el desorden al entrar/salir de
+   pantalla completa en algunos navegadores Android).
+   ===================================================== */
+function fijarAltoReal() {
+    document.documentElement.style.setProperty(
+        "--vh",
+        (window.innerHeight * 0.01) + "px"
+    );
+}
+
+fijarAltoReal();
+
+window.addEventListener("resize", fijarAltoReal);
+window.addEventListener("orientationchange", () => {
+    // el navegador tarda en reportar el tamaño correcto tras rotar / entrar en fullscreen
+    setTimeout(fijarAltoReal, 150);
+});
+
+/* =====================================================
+   DETECTAR SI HACE FALTA PEDIR GIRAR MANUALMENTE
+   ===================================================== */
+function comprobarOrientacion() {
+    const esVertical = window.innerHeight > window.innerWidth;
+    document.body.classList.toggle("necesita-rotar", esVertical);
+}
+
+window.addEventListener("resize", comprobarOrientacion);
+window.addEventListener("orientationchange", () => {
+    setTimeout(comprobarOrientacion, 150);
+});
+
+/* =====================================================
+   FULLSCREEN
+   ===================================================== */
+function estaEnFullscreen() {
+    return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+async function activarPantallaCompleta() {
+    try {
+        if (document.documentElement.requestFullscreen) {
+            await document.documentElement.requestFullscreen();
+        } else if (document.documentElement.webkitRequestFullscreen) {
+            document.documentElement.webkitRequestFullscreen();
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        if (screen.orientation && typeof screen.orientation.lock === "function") {
+            try {
+                await screen.orientation.lock("landscape-primary");
+                console.log("✓ Juego bloqueado en horizontal");
+            } catch (error) {
+                console.log("No se pudo bloquear la orientación:", error);
+            }
+        }
+
+        document.body.classList.add("fullscreen-active");
+        fijarAltoReal();
+        comprobarOrientacion();
+
+    } catch (error) {
+        console.log("No se pudo activar fullscreen:", error);
+    }
+}
+
+async function salirPantallaCompleta() {
+    try {
+        if (screen.orientation && typeof screen.orientation.unlock === "function") {
+            try { screen.orientation.unlock(); } catch (error) {}
+        }
+
+        if (document.exitFullscreen) {
+            await document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        }
+    } catch (error) {
+        console.log("Error al salir de fullscreen:", error);
+    }
+}
+
+fullscreenBtn.addEventListener("click", async function() {
+    if (estaEnFullscreen()) {
+        await salirPantallaCompleta();
+    } else {
+        await activarPantallaCompleta();
+    }
+});
+
+function actualizarFullscreen() {
+    document.body.classList.toggle("fullscreen-active", estaEnFullscreen());
+    fijarAltoReal();
+    comprobarOrientacion();
+}
+
+document.addEventListener("fullscreenchange", actualizarFullscreen);
+document.addEventListener("webkitfullscreenchange", actualizarFullscreen);
+
+/* =====================================================
+   CARGA
+   ===================================================== */
+let progreso = 0;
+let cargaTerminada = false;
+
+const intervalo = setInterval(() => {
+    progreso += Math.random() * 4 + 1;
+
+    if (progreso >= 100) {
+        progreso = 100;
+        clearInterval(intervalo);
+        estadoTexto.textContent = "Listo";
+        cargaTerminada = true;
+
+        // Mostrar botón "Iniciar juego"
+        btnIniciar.classList.add("visible");
+    }
+
+    barFill.style.width = progreso + "%";
+    porcentaje.textContent = Math.floor(progreso) + "%";
+}, 120);
+
+/* =====================================================
+   INICIAR JUEGO
+   El video se reproduce en loop hasta este momento.
+   ===================================================== */
+btnIniciar.addEventListener("click", function() {
+    // Detener el video de fondo
+    bgVideo.pause();
+    bgVideo.currentTime = 0;
+
+    // Aquí puedes poner lo que quieras al iniciar:
+    // - Ocultar la pantalla de carga
+    // - Cargar el juego real
+    // - Cambiar de página, etc.
+    console.log("▶ Iniciar juego");
+
+    // Ejemplo: ocultar el loader y dejar solo el fondo negro
+    // (reemplaza esto con tu lógica de juego)
+    document.querySelector(".loader").style.display = "none";
+    document.querySelector(".titulo-wrap").style.display = "none";
+    document.querySelector(".overlay").style.opacity = "0.85";
+
+    // Si quieres que el video desaparezca también:
+    // bgVideo.style.display = "none";
+
+    // O si quieres que el juego empiece en otra pantalla:
+    // window.location.href = "juego.html";
+});
+
+/* Asegurar que el video empiece a reproducirse
+   (algunos navegadores móviles necesitan interacción,
+   pero como está muted + autoplay suele funcionar) */
+bgVideo.play().catch(err => {
+    console.log("Autoplay bloqueado, se reproducirá al interactuar:", err);
+});
+
+comprobarOrientacion();
+</script>
+
+</body>
+</html>
